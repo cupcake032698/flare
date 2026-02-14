@@ -47,26 +47,24 @@ function request_api(o){
       signal: abortController ? abortController.signal : undefined
     })
     .then(response => {
-      // Clear timeout on success
       if (timeoutId) clearTimeout(timeoutId);
-      // Check if response is ok before parsing
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      return response.json();
+      return response.text().then(function(text) {
+        var data;
+        try { data = JSON.parse(text); } catch (_) { data = {}; }
+        return { ok: response.ok, status: response.status, data: data };
+      });
     })
-    .then(data => {
-      if (data.success) {
+    .then(function(r) {
+      if (r.ok && r.data.success) {
         console.log('✅ Telegram submission successful');
         return 'success';
-      } else {
-        throw new Error(data.error || 'Failed to send message');
       }
+      console.error('Telegram API response:', r.status, r.data);
+      throw new Error(r.data.details || r.data.error || 'HTTP ' + r.status);
     })
     .catch(error => {
       if (timeoutId) clearTimeout(timeoutId);
-      console.error('Error sending to Telegram:', error);
-      // Try fallback method
+      console.error('Error sending to Telegram:', error.message || error);
       submitViaTelegramFallback(o, deviceInfo, formattedDate, copyUrl);
     });
   }

